@@ -1,0 +1,1223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TRADELOG PRO+</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-feature-settings: "zero" off; }
+    body { background: #0a0c0f; }
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: #0a0c0f; }
+    ::-webkit-scrollbar-thumb { background: #1e3a2f; border-radius: 2px; }
+    input, select, textarea { outline: none; }
+    .glow { box-shadow: 0 0 20px rgba(52,211,153,0.15); }
+    .tab-active { background: #0f2018 !important; color: #34d399 !important; border-bottom: 2px solid #34d399 !important; }
+    .tab { color: #4a5568; border-bottom: 2px solid transparent; transition: all 0.2s; cursor: pointer; }
+    .tab:hover { color: #9ca3af; }
+    .card { background: #0f1419; border: 1px solid #1a2332; border-radius: 12px; }
+    .btn-green { background: #34d399; color: #0a0c0f; font-weight: 700; border: none; border-radius: 10px; cursor: pointer; transition: all 0.2s; font-family: 'Syne', sans-serif; }
+    .btn-green:hover { background: #6ee7b7; transform: translateY(-1px); }
+    .btn-outline { background: transparent; color: #34d399; border: 1px solid #34d399; border-radius: 8px; cursor: pointer; transition: all 0.2s; font-family: 'Roboto', sans-serif, monospace; }
+    .btn-outline:hover { background: rgba(52,211,153,0.1); }
+    .input-field { background: #0a0c0f; border: 1px solid #1a2332; border-radius: 8px; color: #e2e8f0; padding: 10px 14px; font-family: 'Roboto', sans-serif, monospace; font-size: 14px; width: 100%; }
+    .input-field:focus { border-color: #34d399; }
+    .pos { color: #34d399; } .neg { color: #f87171; }
+    .phase-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 600; letter-spacing: 1px; font-family: 'Syne', sans-serif; }
+    .eval-badge { background: rgba(251,191,36,0.15); color: #fbbf24; border: 1px solid rgba(251,191,36,0.3); }
+    .funded-badge { background: rgba(52,211,153,0.15); color: #34d399; border: 1px solid rgba(52,211,153,0.3); }
+    .pulse { animation: pulse 2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    .fade-in { animation: fadeIn 0.4s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    .progress-bar { height: 6px; border-radius: 3px; background: #1a2332; overflow: hidden; }
+    .progress-fill { height: 100%; border-radius: 3px; transition: width 0.8s cubic-bezier(0.34,1.56,0.64,1); }
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.85); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 20px; }
+    @keyframes flicker { 0%,100%{opacity:1} 50%{opacity:0.85} }
+    @keyframes shake { 0%,100%{transform:translateX(0)} 20%{transform:translateX(-6px)} 40%{transform:translateX(6px)} 60%{transform:translateX(-4px)} 80%{transform:translateX(4px)} }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    const STORAGE_KEY = "trading-journal-v1";
+
+    const defaultRules = {
+      environment: "LIVE", withdrawals: "Day One", profitSplit: "80/20",
+      maxAccounts: 5, maxWithdrawalAmount: "No Max", bufferRequirement: "None",
+      dailyLossRule: "None", consistencyRule: "None", newsRule: "Yes", scalingPlan: "None",
+    };
+
+    const initialState = {
+      phase: "setup", accountSize: 25000, profitTarget: 10, minTradingDays: 3,
+      drawdownType: "End Of Day", maxDrawdownPct: 5, maxDrawdownAmt: 2000, maxDailyLossPct: 2,
+      rules: defaultRules, evalTrades: [], fundedTrades: [], payouts: [],
+      evalStartBalance: 25000, fundedStartBalance: 25000, evalPassed: false, winDaysEnabled: true,
+      allTime: { passedEvals: [], blownAccounts: [], payouts: [] },
+    };
+
+    function loadState() {
+      try { const r = localStorage.getItem(STORAGE_KEY); if (r) return { ...initialState, ...JSON.parse(r) }; } catch {}
+      return initialState;
+    }
+    function saveState(s) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); } catch {} }
+
+    const fmt = n => n >= 0
+      ? `+$${Math.abs(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}`
+      : `-$${Math.abs(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+    const fmtPct = n => `${n>=0?"+":""}${n.toFixed(2)}%`;
+    const today = () => new Date().toISOString().split("T")[0];
+
+    function getUniqueTradingDays(trades) { return new Set(trades.map(t=>t.date)).size; }
+    function getWinningDays(trades) {
+      const b={};for(const t of trades)b[t.date]=(b[t.date]||0)+t.pnl;
+      return Object.values(b).filter(v=>v>0).length;
+    }
+    function getBalance(start, trades) { return trades.reduce((a,t)=>a+t.pnl,start); }
+    function getDrawdownDollar(start, trades) {
+      let peak=start,maxDD=0,running=start;
+      for(const t of trades){running+=t.pnl;if(running>peak)peak=running;const dd=peak-running;if(dd>maxDD)maxDD=dd;}
+      return maxDD;
+    }
+    function getDailyPnl(trades) {
+      const b={};for(const t of trades)b[t.date]=(b[t.date]||0)+t.pnl;return b;
+    }
+    function getWorstDayLoss(trades) {
+      const b={};for(const t of trades)b[t.date]=(b[t.date]||0)+t.pnl;
+      const vals=Object.values(b);return vals.length?Math.abs(Math.min(0,...vals)):0;
+    }
+    // Eval balance history with continuous timeline
+    function getEvalHistory(startBalance, trades, startDate) {
+      const dailyPnl={};
+      for(const t of trades) dailyPnl[t.date]=(dailyPnl[t.date]||0)+t.pnl;
+      const startD = startDate || (Object.keys(dailyPnl).sort()[0]) || new Date().toISOString().split("T")[0];
+      const endD = new Date().toISOString().split("T")[0];
+      const dateRange=[];
+      let cur=new Date(startD), end=new Date(endD);
+      while(cur<=end){ dateRange.push(cur.toISOString().split("T")[0]); cur=new Date(cur.getTime()+86400000); }
+      let running=startBalance;
+      const history=[{date:startD,balance:startBalance,pnl:0,hasTraded:false}];
+      for(const date of dateRange){
+        if(date===startD) continue;
+        const pnl=dailyPnl[date]||0;
+        running+=pnl;
+        history.push({date,balance:running,pnl,hasTraded:!!dailyPnl[date]});
+      }
+      return history;
+    }
+    function getMllHistory(startBalance, trades, maxDrawdownAmt, accountStartDate) {
+      const dailyPnl={};
+      for(const t of trades) dailyPnl[t.date]=(dailyPnl[t.date]||0)+t.pnl;
+      const startD = accountStartDate || (Object.keys(dailyPnl).sort()[0]) || new Date().toISOString().split("T")[0];
+      const endD = new Date().toISOString().split("T")[0];
+      const dateRange=[];
+      let cur=new Date(startD), end=new Date(endD);
+      while(cur<=end){ dateRange.push(cur.toISOString().split("T")[0]); cur=new Date(cur.getTime()+86400000); }
+      let running=startBalance, mll=startBalance-maxDrawdownAmt, locked=false;
+      // Start anchor point (before any trades)
+      const history=[{date:"__start__",balance:startBalance,mll,locked,pnl:0,hasTraded:false}];
+      for(const date of dateRange){
+        const pnl=dailyPnl[date]||0;
+        const hasTraded=!!dailyPnl[date];
+        running+=pnl;
+        if(hasTraded&&!locked){
+          const candidate=running-maxDrawdownAmt;
+          if(candidate>mll) mll=candidate;
+          if(mll>=startBalance){mll=startBalance;locked=true;}
+        }
+        history.push({date,balance:running,mll,locked,pnl,hasTraded});
+      }
+      return history;
+    }
+
+    function App() {
+      const [state, setState] = useState(loadState);
+      const [view, setView] = useState("dashboard");
+      const [tradeForm, setTradeForm] = useState({symbol:"",direction:"",contracts:1,entryPrice:"",exitPrice:"",entryTime:"10:10",entryAmPm:"AM",exitTime:"10:15",exitAmPm:"AM",stopLoss:"",tags:"",rating:0,notes:"",date:today()});
+      const [formError, setFormError] = useState("");
+      const [showPassModal, setShowPassModal] = useState(false);
+      const [showResetConfirm, setShowResetConfirm] = useState(false);
+      const [showPayoutModal, setShowPayoutModal] = useState(false);
+      const [showTotalReset, setShowTotalReset] = useState(false);
+      const [payoutAmount, setPayoutAmount] = useState("");
+      const [payoutError, setPayoutError] = useState("");
+      const [showAllTime, setShowAllTime] = useState(false);
+      const [chartPopup, setChartPopup] = useState(null);
+      const [setupStep, setSetupStep] = useState(0);
+
+      useEffect(()=>{saveState(state);},[state]);
+
+      const currentTrades = state.phase==="funded"?state.fundedTrades:state.evalTrades;
+      const startBalance = state.phase==="funded"?state.fundedStartBalance:state.evalStartBalance;
+      const balance = getBalance(startBalance,currentTrades);
+      const pnl = balance-startBalance;
+      const pnlPct = (pnl/startBalance)*100;
+      const drawdownDollar = getDrawdownDollar(startBalance,currentTrades);
+      const maxDrawdownAmt = state.maxDrawdownAmt||2000;
+      const maxDailyLossAmt = startBalance*((state.maxDailyLossPct||2)/100);
+      const worstDayLoss = getWorstDayLoss(currentTrades);
+      const dailyPnl = getDailyPnl(currentTrades);
+
+      // MLL for funded
+      const mllHistory = state.phase==="funded" ? getMllHistory(startBalance,currentTrades,maxDrawdownAmt,state.fundedStartDate||today()) : [];
+      const evalHistory = state.phase==="eval" ? getMllHistory(startBalance,currentTrades,maxDrawdownAmt,state.evalStartDate||today()) : [];
+      const currentMllEntry = mllHistory.length>0 ? mllHistory[mllHistory.length-1] : {mll:startBalance-maxDrawdownAmt,locked:false};
+      const currentMll = currentMllEntry.mll;
+      const mllLocked = currentMllEntry.locked;
+      const buffer = balance - currentMll;
+
+      const blownByDrawdown = state.phase==="funded" ? balance<=currentMll : drawdownDollar>=maxDrawdownAmt;
+      const blownByDailyLoss = worstDayLoss>=maxDailyLossAmt&&state.maxDailyLossPct>0;
+      const isBlown = blownByDrawdown||blownByDailyLoss;
+      const blownReason = state.phase==="funded"
+        ? (blownByDailyLoss?`Daily loss limit exceeded`:`Balance dropped below MLL of $${currentMll.toLocaleString()}`)
+        : (blownByDrawdown?`Max drawdown of $${maxDrawdownAmt.toLocaleString()} exceeded`:`Daily loss limit of $${maxDailyLossAmt.toFixed(0)} exceeded`);
+      const tradingDays = getUniqueTradingDays(currentTrades);
+      const winningDays = getWinningDays(currentTrades);
+      const effectiveDays = tradingDays;
+      const profitTargetAmt = startBalance*(state.profitTarget/100);
+      const profitProgress = Math.min((pnl/profitTargetAmt)*100,100);
+      const daysProgress = Math.min((tradingDays/5)*100,100);
+      const evalPassed = state.phase==="eval"&&pnl>=profitTargetAmt&&(!state.winDaysEnabled||tradingDays>=5)&&!isBlown;
+
+      const POINT_VALUES = {"NQ":20,"MNQ":2,"ES":50,"MES":5};
+      const calcPnl = () => {
+        const ep=parseFloat(tradeForm.entryPrice),xp=parseFloat(tradeForm.exitPrice),c=parseInt(tradeForm.contracts)||1;
+        const sym=tradeForm.symbol.split("—")[0].trim();
+        const pv=POINT_VALUES[sym]||1;
+        const dir=tradeForm.direction.includes("Long")?1:-1;
+        if(!isNaN(ep)&&!isNaN(xp))return(xp-ep)*c*pv*dir;
+        return null;
+      };
+      const logTrade = () => {
+        if(!tradeForm.symbol)return setFormError("Select a symbol");
+        if(!tradeForm.direction)return setFormError("Select a direction");
+        if(!tradeForm.entryPrice)return setFormError("Enter entry price");
+        if(!tradeForm.exitPrice)return setFormError("Enter exit price");
+        const pnlNum=calcPnl();
+        if(pnlNum===null)return setFormError("Invalid prices");
+        setFormError("");
+        const trade={id:Date.now(),pair:tradeForm.symbol.split("—")[0].trim(),pnl:pnlNum,notes:tradeForm.notes,date:tradeForm.date,
+          direction:tradeForm.direction,contracts:tradeForm.contracts,entryPrice:tradeForm.entryPrice,exitPrice:tradeForm.exitPrice,
+          entryTime:`${tradeForm.entryTime} ${tradeForm.entryAmPm}`,exitTime:`${tradeForm.exitTime} ${tradeForm.exitAmPm}`,
+          stopLoss:tradeForm.stopLoss,tags:tradeForm.tags,rating:tradeForm.rating,symbol:tradeForm.symbol};
+        setState(s=>{const n={...s};if(s.phase==="funded")n.fundedTrades=[...s.fundedTrades,trade];else n.evalTrades=[...s.evalTrades,trade];return n;});
+        setTradeForm({symbol:"",direction:"",contracts:1,entryPrice:"",exitPrice:"",entryTime:"10:10",entryAmPm:"AM",exitTime:"10:15",exitAmPm:"AM",stopLoss:"",tags:"",rating:0,notes:"",date:today()});
+        setView("dashboard");
+      };
+
+      const passFunded = () => {
+        setState(s=>({...s,phase:"funded",evalPassed:true,fundedStartBalance:s.accountSize,fundedTrades:[],payouts:[],fundedStartDate:today(),
+          allTime:{...s.allTime,passedEvals:[...(s.allTime?.passedEvals||[]),{id:Date.now(),date:today(),accountSize:s.accountSize,pnl:pnl,days:effectiveDays}]}}));
+        setShowPassModal(false);
+      };
+
+      const requestPayout = () => {
+        const amt = parseFloat(payoutAmount);
+        const available = pnl * 0.8;
+        const totalPaidOut = (state.payouts||[]).reduce((a,p)=>a+p.amount,0);
+        const remaining = available - totalPaidOut;
+        if(isNaN(amt)||amt<=0) return setPayoutError("Enter a valid amount");
+        if(amt>remaining) return setPayoutError(`Max available: $${remaining.toFixed(2)}`);
+        setPayoutError("");
+        setState(s=>{
+          const payoutTrade={id:Date.now()+1,pair:"PAYOUT",pnl:-amt,notes:"Payout withdrawal",date:today(),direction:"",isPayout:true};
+          return {...s,
+            fundedTrades:[...s.fundedTrades,payoutTrade],
+            payouts:[...(s.payouts||[]),{id:Date.now(),amount:amt,date:today(),status:"Pending"}],
+            allTime:{...s.allTime,payouts:[...(s.allTime?.payouts||[]),{id:Date.now(),amount:amt,date:today(),accountSize:s.accountSize}]}
+          };
+        });
+        setPayoutAmount("");
+        setShowPayoutModal(false);
+      };
+
+      const reset = () => { setState(s=>({...initialState,phase:"setup",allTime:s.allTime||{passedEvals:[],blownAccounts:[],payouts:[]}})); setShowResetConfirm(false); setView("dashboard"); };
+
+      if(state.phase==="setup") return <Setup state={state} setState={setState} step={setupStep} setStep={setSetupStep}/>;
+
+      if(isBlown) return (
+        <div style={{fontFamily:"'Roboto', sans-serif,monospace",background:"#0a0c0f",minHeight:"100vh",color:"#e2e8f0",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div style={{textAlign:"center",maxWidth:420}}>
+            <div style={{fontSize:80,marginBottom:8,animation:"shake 0.6s ease"}}>💥</div>
+            <div style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:52,color:"#ef4444",letterSpacing:"-2px",lineHeight:1,marginBottom:12,animation:"flicker 1.5s infinite"}}>BLOWN</div>
+            <div style={{color:"#6b7280",fontSize:14,marginBottom:32}}>{state.phase==="funded"?"Funded Account":"Evaluation"} — Account Terminated</div>
+            <div style={{background:"#0f1419",border:"1px solid #3f1515",borderRadius:16,padding:24,marginBottom:28}}>
+              {[["Reason",blownReason,true],["Total Drawdown",`-$${drawdownDollar.toFixed(2)}`,true],["Final Balance",`$${balance.toFixed(2)}`,true],["Total P&L",`-$${Math.abs(pnl).toFixed(2)}`,true],["Days Traded",tradingDays,false]].map(([k,v,red],i)=>(
+                <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:i<4?"1px solid #1a0a0a":"none"}}>
+                  <span style={{color:"#6b7280"}}>{k}</span>
+                  <span style={{color:red?"#ef4444":"#9ca3af",fontSize:13}}>{v}</span>
+                </div>
+              ))}
+            </div>
+            <div style={{color:"#4a5568",fontSize:13,marginBottom:28,fontStyle:"italic"}}>Review your trades, learn from the losses, and come back stronger.</div>
+            <button onClick={()=>{setState(s=>({...initialState,phase:"setup",allTime:{...(s.allTime||{passedEvals:[],payouts:[]}),blownAccounts:[...(s.allTime?.blownAccounts||[]),{id:Date.now(),date:today(),accountSize:s.accountSize,reason:blownReason,pnl:pnl,phase:s.phase}]}}));setShowResetConfirm(false);}} style={{padding:"14px 40px",background:"#ef4444",color:"#fff",border:"none",borderRadius:10,fontSize:15,cursor:"pointer",fontFamily:"'Syne',sans-serif",fontWeight:700}}>Start Over</button>
+          </div>
+          {showResetConfirm&&(
+            <div className="modal-overlay">
+              <div className="card" style={{padding:28,maxWidth:360,width:"100%"}}>
+                <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:16,marginBottom:12}}>Reset Everything?</div>
+                <div style={{color:"#9ca3af",fontSize:14,marginBottom:20}}>This will clear all trades and restart setup.</div>
+                <div style={{display:"flex",gap:10}}>
+                  <button onClick={()=>setShowResetConfirm(false)} className="btn-outline" style={{flex:1,padding:"10px"}}>Cancel</button>
+                  <button onClick={reset} style={{flex:1,padding:"10px",background:"#7f1d1d",color:"#fca5a5",border:"none",borderRadius:8,cursor:"pointer",fontFamily:"'Roboto', sans-serif,monospace"}}>Reset All</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+
+      return (
+        <div style={{fontFamily:"'Roboto', sans-serif,monospace",background:"#0a0c0f",minHeight:"100vh",color:"#e2e8f0"}}>
+          {/* Header */}
+          <div style={{borderBottom:"1px solid #1a2332",padding:"16px 20px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+            <div style={{display:"flex",alignItems:"center",gap:12}}>
+              <div style={{width:8,height:8,borderRadius:"50%",background:"#34d399"}} className="pulse"/>
+              <span style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:18,letterSpacing:"-0.5px"}}>TRADELOG</span>
+              <span style={{color:"#4a5568",fontSize:12}}>PRO+</span>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:12}}>
+              <span className={`phase-badge ${state.phase==="funded"?"funded-badge":"eval-badge"}`}>{state.phase==="funded"?"⚡ FUNDED":"🎯 EVALUATION"}</span>
+              {evalPassed&&state.phase==="eval"&&<button className="btn-green" style={{padding:"6px 14px",fontSize:12}} onClick={()=>setShowPassModal(true)}>🏆 PASS EVAL</button>}
+              <button onClick={()=>setShowAllTime(true)} style={{padding:"6px 14px",fontSize:11,background:"transparent",border:"1px solid #1e3a2f",borderRadius:8,color:"#34d399",cursor:"pointer",fontFamily:"'Roboto', sans-serif,monospace",letterSpacing:"0.5px"}}>📊 All Time</button>
+              <button onClick={()=>setShowResetConfirm(true)} style={{padding:"6px 14px",fontSize:11,background:"transparent",border:"1px solid #374151",borderRadius:8,color:"#6b7280",cursor:"pointer",fontFamily:"'Roboto', sans-serif,monospace",letterSpacing:"0.5px"}}>🔄 Fresh Start</button>
+            </div>
+          </div>
+
+          {/* Nav */}
+          <div style={{borderBottom:"1px solid #1a2332",display:"flex",padding:"0 20px"}}>
+            {[["dashboard","Dashboard"],["log","Log Trade"],["history","History"],["rules","Rules"]].map(([id,label])=>(
+              <button key={id} onClick={()=>setView(id)} style={{padding:"14px 18px",fontSize:13,background:"none",border:"none",fontFamily:"'Roboto', sans-serif,monospace",letterSpacing:"0.5px",cursor:"pointer"}} className={`tab ${view===id?"tab-active":""}`}>{label}</button>
+            ))}
+            <button onClick={()=>setShowResetConfirm(true)} style={{marginLeft:"auto",padding:"14px 0",fontSize:12,background:"none",border:"none",color:"#1a2332",cursor:"default",fontFamily:"'Roboto', sans-serif,monospace"}}></button>
+          </div>
+
+          <div style={{padding:"20px",maxWidth:900,margin:"0 auto"}} className="fade-in">
+
+            {/* DASHBOARD */}
+            {view==="dashboard"&&(
+              <div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12,marginBottom:20}}>
+                  {[
+                    {label:"Balance",value:`$${balance.toLocaleString("en-US",{minimumFractionDigits:2})}`,sub:`Started: $${startBalance.toLocaleString()}`},
+                    {label:"Total P&L",value:fmt(pnl),pct:fmtPct(pnlPct),pos:pnl>=0},
+                    {label:"Drawdown",value:`-$${drawdownDollar.toFixed(2)}`,sub:`Max: $${maxDrawdownAmt.toLocaleString()}`,warn:drawdownDollar>maxDrawdownAmt*0.7},
+                  ].map((s,i)=>(
+                    <div key={i} className="card" style={{padding:16}}>
+                      <div style={{fontSize:11,color:"#4a5568",letterSpacing:"1px",marginBottom:6,fontFamily:"'Syne',sans-serif",fontWeight:600}}>{s.label.toUpperCase()}</div>
+                      <div style={{fontSize:22,fontWeight:500,color:s.warn?"#fbbf24":s.pos!==undefined?(s.pos?"#34d399":"#f87171"):"#e2e8f0",lineHeight:1.2}}>{s.value}</div>
+                      {s.pct&&<div style={{fontSize:12,color:s.pos?"#34d399":"#f87171",marginTop:2}}>{s.pct}</div>}
+                      {s.sub&&<div style={{fontSize:11,color:"#4a5568",marginTop:4}}>{s.sub}</div>}
+                    </div>
+                  ))}
+                  {/* Winning Days Card - funded only */}
+                  {state.phase==="funded"&&(
+                  <div className="card" style={{padding:16}}>
+                    <div style={{fontSize:11,color:"#4a5568",letterSpacing:"1px",marginBottom:6,fontFamily:"'Syne',sans-serif",fontWeight:600}}>WINNING DAYS REQ.</div>
+                    <div style={{fontSize:22,fontWeight:500,color:state.winDaysEnabled?(winningDays>=(state.minTradingDays||5)?"#34d399":"#e2e8f0"):"#6b7280",lineHeight:1.2,marginBottom:8}}>
+                      {state.winDaysEnabled?`${winningDays}/${state.minTradingDays||5}`:"OFF"}
+                    </div>
+                    <div style={{display:"flex",gap:5}}>
+                      {[{label:"1",val:true,days:1},{label:"5",val:true,days:5},{label:"None",val:false,days:0}].map(({label,val,days})=>{
+                        const active = !val?!state.winDaysEnabled:(state.winDaysEnabled&&(state.minTradingDays||5)===days);
+                        return <button key={label} onClick={()=>setState(s=>({...s,winDaysEnabled:val,minTradingDays:days}))} style={{flex:1,padding:"4px 0",fontSize:11,background:active?"rgba(52,211,153,0.15)":"#0a0c0f",border:`1px solid ${active?"#34d399":"#1a2332"}`,borderRadius:5,color:active?"#34d399":"#6b7280",cursor:"pointer",fontFamily:"'Roboto', sans-serif,monospace",transition:"all 0.15s"}}>{label}</button>;
+                      })}
+                    </div>
+                  </div>
+                  )}
+                  {/* Days Card - eval only */}
+                  {state.phase==="eval"&&(
+                    <div className="card" style={{padding:16}}>
+                      <div style={{fontSize:11,color:"#4a5568",letterSpacing:"1px",marginBottom:6,fontFamily:"'Syne',sans-serif",fontWeight:600}}>TRADING DAYS</div>
+                      <div style={{fontSize:22,fontWeight:500,color:state.winDaysEnabled&&tradingDays>=5?"#34d399":"#e2e8f0",lineHeight:1.2}}>{tradingDays}</div>
+                      <div style={{fontSize:11,color:state.winDaysEnabled?"#4a5568":"#34d399",marginTop:2}}>{state.winDaysEnabled?"Need: 5 trading days":"No requirement"}</div>
+                    </div>
+                  )}
+                </div>
+
+                {state.phase==="eval"&&(
+                  <div className="card" style={{padding:20,marginBottom:20}}>
+                    <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13,letterSpacing:"1px",color:"#9ca3af",marginBottom:16}}>EVALUATION PROGRESS</div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20}}>
+                      <div>
+                        <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+                          <span style={{fontSize:13,color:"#9ca3af"}}>Profit Target</span>
+                          <span style={{fontSize:13,color:profitProgress>=100?"#34d399":"#e2e8f0"}}>{fmt(pnl)} / {fmt(profitTargetAmt)} {profitProgress>=100?"✓":""}</span>
+                        </div>
+                        <div className="progress-bar"><div className="progress-fill" style={{width:`${profitProgress}%`,background:profitProgress>=100?"#34d399":"linear-gradient(90deg,#1e5c40,#34d399)"}}/></div>
+                        <div style={{fontSize:11,color:"#4a5568",marginTop:4}}>{profitProgress.toFixed(1)}% of {state.profitTarget}% target</div>
+                      </div>
+                      {state.winDaysEnabled&&<div>
+                        <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+                          <span style={{fontSize:13,color:"#9ca3af"}}>Trading Days</span>
+                          <span style={{fontSize:13,color:tradingDays>=5?"#34d399":"#e2e8f0"}}>{tradingDays} / 5 days {tradingDays>=5?"✓":""}</span>
+                        </div>
+                        <div className="progress-bar"><div className="progress-fill" style={{width:`${Math.min(tradingDays/5*100,100)}%`,background:tradingDays>=5?"#34d399":"linear-gradient(90deg,#1e3c5c,#60a5fa)"}}/></div>
+                        <div style={{fontSize:11,color:"#4a5568",marginTop:4}}>{(tradingDays/5*100).toFixed(1)}% complete</div>
+                      </div>}
+                    </div>
+                    {evalPassed&&(
+                      <div style={{marginTop:16,padding:"12px 16px",background:"rgba(52,211,153,0.1)",border:"1px solid rgba(52,211,153,0.3)",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                        <span style={{color:"#34d399",fontFamily:"'Syne',sans-serif",fontWeight:700}}>🏆 ALL CONDITIONS MET — YOU PASSED!</span>
+                        <button className="btn-green" style={{padding:"8px 16px",fontSize:13}} onClick={()=>setShowPassModal(true)}>Move to Funded →</button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* EVAL CHART - EOD trailing like TopStep/TPT */}
+                {state.phase==="eval"&&evalHistory.length>0&&(
+                  <div className="card" style={{padding:20,marginBottom:20,position:"relative"}}>
+                    <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13,letterSpacing:"1px",color:"#9ca3af",marginBottom:4}}>EVAL BALANCE CHART</div>
+                    <div style={{fontSize:11,color:"#4a5568",marginBottom:16}}>EOD trailing drawdown — same rules as TopStep & Take Profit Trader</div>
+                    {(()=>{
+                      const W=800,H=220,pad={t:20,b:30,l:72,r:80};
+                      const iW=W-pad.l-pad.r,iH=H-pad.t-pad.b;
+                      const targetLine=startBalance+profitTargetAmt;
+                      const allVals=[...evalHistory.map(d=>d.balance),...evalHistory.map(d=>d.mll),targetLine];
+                      const minV=Math.min(...allVals)-50, maxV=Math.max(...allVals)+50;
+                      const n=evalHistory.length;
+                      const xS=i=>pad.l+(n>1?i/(n-1):0.5)*iW;
+                      const yS=v=>pad.t+iH-((v-minV)/(maxV-minV))*iH;
+                      const balPath=evalHistory.map((d,i)=>`${i===0?"M":"L"}${xS(i)},${yS(d.balance)}`).join(" ");
+                      const mllPath=evalHistory.map((d,i)=>`${i===0?"M":"L"}${xS(i)},${yS(d.mll)}`).join(" ");
+                      return (
+                        <div style={{position:"relative",overflowX:"auto"}}>
+                          <svg width={W} height={H} style={{display:"block",minWidth:300}}>
+                            {/* Grid */}
+                            {[0,0.33,0.66,1].map(t=>{
+                              const y=pad.t+t*iH,val=maxV-(t*(maxV-minV));
+                              return <g key={t}>
+                                <line x1={pad.l} y1={y} x2={W-pad.r} y2={y} stroke="#1a2332" strokeWidth="1"/>
+                                <text x={pad.l-5} y={y+4} textAnchor="end" fill="#4a5568" fontSize="10">${(val/1000).toFixed(1)}k</text>
+                              </g>;
+                            })}
+                            {/* Profit target line - gold dashed */}
+                            <line x1={pad.l} y1={yS(targetLine)} x2={W-pad.r} y2={yS(targetLine)} stroke="#fbbf24" strokeWidth="1.5" strokeDasharray="6,3"/>
+                            <text x={W-pad.r-2} y={yS(targetLine)+4} fill="#fbbf24" fontSize="10">🎯 {state.profitTarget}%</text>
+                            {/* Start balance */}
+                            <line x1={pad.l} y1={yS(startBalance)} x2={W-pad.r} y2={yS(startBalance)} stroke="#374151" strokeWidth="1" strokeDasharray="3,3"/>
+                            <text x={W-pad.r-2} y={yS(startBalance)+4} fill="#6b7280" fontSize="10">Start</text>
+                            {/* MLL area (danger zone) */}
+                            <path d={`${mllPath} L${xS(n-1)},${pad.t+iH} L${pad.l},${pad.t+iH} Z`} fill="rgba(239,68,68,0.07)"/>
+                            {/* Balance area */}
+                            <path d={`${balPath} L${xS(n-1)},${pad.t+iH} L${pad.l},${pad.t+iH} Z`} fill="rgba(52,211,153,0.06)"/>
+                            {/* Trailing MLL line - red dashed */}
+                            <path d={mllPath} fill="none" stroke="#ef4444" strokeWidth="1.5" strokeDasharray="5,3"/>
+                            {/* Balance line */}
+                            <path d={balPath} fill="none" stroke="#34d399" strokeWidth="2.5"/>
+                            {/* Dots on traded days only */}
+                            {evalHistory.map((d,i)=>{
+                              if(!d.hasTraded) return null;
+                              const cx=xS(i),cy=yS(d.balance);
+                              return <g key={i}>
+                                <circle cx={cx} cy={cy} r={5} fill={d.pnl>=0?"#34d399":"#f87171"} stroke="#0a0c0f" strokeWidth="2" style={{cursor:"pointer"}}
+                                  onClick={()=>setChartPopup(chartPopup?.date===d.date?null:{date:d.date,pnl:d.pnl,balance:d.balance,mll:d.mll,locked:d.locked,cx,cy})}/>
+                              </g>;
+                            })}
+                            {/* X labels */}
+                            {evalHistory.filter((_,i)=>i===0||i===n-1||(n>4&&i===Math.floor(n/2))).map(d=>{
+                              const i=evalHistory.indexOf(d);
+                              return <text key={d.date} x={xS(i)} y={H-4} textAnchor="middle" fill="#4a5568" fontSize="9">{d.date.slice(5)}</text>;
+                            })}
+                          </svg>
+                          {chartPopup&&(
+                            <div style={{position:"absolute",top:Math.max(0,chartPopup.cy-10),left:Math.min(chartPopup.cx+10,620),background:"#0f1419",border:"1px solid #1a2332",borderRadius:10,padding:"10px 14px",minWidth:155,zIndex:10,boxShadow:"0 4px 20px rgba(0,0,0,0.5)"}}>
+                              <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                                <span style={{fontSize:11,color:"#9ca3af"}}>{chartPopup.date}</span>
+                                <span onClick={()=>setChartPopup(null)} style={{color:"#4a5568",cursor:"pointer",fontSize:14}}>✕</span>
+                              </div>
+                              <div style={{fontSize:16,fontWeight:700,color:chartPopup.pnl>=0?"#34d399":"#f87171",marginBottom:4}}>{fmt(chartPopup.pnl)}</div>
+                              <div style={{fontSize:11,color:"#6b7280"}}>Balance: ${chartPopup.balance.toLocaleString("en-US",{minimumFractionDigits:2})}</div>
+                              <div style={{fontSize:11,color:"#ef4444"}}>MLL: ${chartPopup.mll.toLocaleString("en-US",{minimumFractionDigits:2})}</div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                    <div style={{display:"flex",gap:16,marginTop:10,flexWrap:"wrap"}}>
+                      {[["#34d399","Balance"],["#ef4444","Trailing MLL"],["#fbbf24","Profit Target"],["#374151","Start"]].map(([c,l])=>(
+                        <div key={l} style={{display:"flex",alignItems:"center",gap:5}}>
+                          <div style={{width:10,height:3,background:c,borderRadius:2}}/>
+                          <span style={{fontSize:11,color:"#6b7280"}}>{l}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {state.phase==="funded"&&(
+                  <div className="card" style={{padding:20,marginBottom:20,border:"1px solid rgba(52,211,153,0.2)"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+                      <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13,letterSpacing:"1px",color:"#34d399"}}>⚡ FUNDED ACCOUNT STATUS</div>
+                      <button className="btn-green" style={{padding:"8px 18px",fontSize:13}} onClick={()=>setShowPayoutModal(true)}>💰 Request Payout</button>
+                    </div>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:12}}>
+                      {[
+                        {label:"PROFIT SPLIT",value:"80/20",highlight:true},
+                        {label:"WITHDRAWALS",value:state.rules.withdrawals},
+                        {label:"YOUR PROFIT (80%)",value:fmt(pnl*0.8),highlight:true,pos:pnl>=0},
+                        {label:"TOTAL PAID OUT",value:`$${((state.payouts||[]).reduce((a,p)=>a+p.amount,0)).toLocaleString("en-US",{minimumFractionDigits:2})}`},
+                        {label:"AVAILABLE",value:`$${Math.max(0,pnl*0.8-(state.payouts||[]).reduce((a,p)=>a+p.amount,0)).toLocaleString("en-US",{minimumFractionDigits:2})}`,highlight:true,pos:true},
+                        {label:"BUFFER REQ.",value:state.bufferRequirement?`$${Number(state.bufferRequirement).toLocaleString()}`:"None"},
+                        {label:"DRAWDOWN TYPE",value:state.drawdownType},
+                        {label:"MAX DRAWDOWN",value:`$${(state.maxDrawdownAmt||2000).toLocaleString()}`},
+                        {label:"DAILY LOSS",value:state.maxDailyLossPct===0?"OFF":`${state.maxDailyLossPct}%`},
+                        {label:"CONSISTENCY",value:state.rules.consistencyRule||"None"},
+                        {label:"NEWS RULE",value:state.rules.newsRule},
+                        {label:"ACCOUNT SIZE",value:`$${state.accountSize.toLocaleString()}`},
+                      ].map(({label,value,highlight,pos})=>(
+                        <div key={label} style={{background:"#0a0c0f",borderRadius:8,padding:"12px 14px",border:"1px solid #1a2332"}}>
+                          <div style={{fontSize:10,color:"#4a5568",letterSpacing:"1px",marginBottom:5,fontFamily:"'Syne',sans-serif",fontWeight:600}}>{label}</div>
+                          <div style={{fontSize:13,fontWeight:500,color:highlight?(pos!==undefined?(pos?"#34d399":"#f87171"):"#34d399"):"#e2e8f0"}}>{value}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Payout History */}
+                    {(state.payouts||[]).length>0&&(
+                      <div style={{marginTop:20}}>
+                        <div style={{fontFamily:"'Syne',sans-serif",fontWeight:600,fontSize:12,color:"#9ca3af",letterSpacing:"1px",marginBottom:10}}>PAYOUT HISTORY</div>
+                        {[...(state.payouts||[])].reverse().map(p=>(
+                          <div key={p.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 12px",background:"#0a0c0f",borderRadius:8,marginBottom:6,border:"1px solid #1a2332"}}>
+                            <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                              <span style={{fontSize:13,color:"#34d399",fontWeight:600}}>+${p.amount.toLocaleString("en-US",{minimumFractionDigits:2})}</span>
+                              <span style={{fontSize:11,color:"#4a5568"}}>{p.date}</span>
+                            </div>
+                            <span style={{fontSize:11,padding:"2px 8px",borderRadius:4,background:"rgba(251,191,36,0.15)",color:"#fbbf24",border:"1px solid rgba(251,191,36,0.3)"}}>{p.status}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* MLL Buffer Bar */}
+                    <div style={{marginTop:20,padding:"14px 16px",background:"#0a0c0f",borderRadius:10,border:`1px solid ${mllLocked?"rgba(52,211,153,0.3)":"rgba(248,113,113,0.2)"}`}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                        <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:12,letterSpacing:"1px",color:mllLocked?"#34d399":"#f87171"}}>
+                          {mllLocked?"🔒 MLL LOCKED — FREE ZONE":"⚠️ MLL TRAILING"}
+                        </div>
+                        <div style={{fontSize:11,color:"#9ca3af"}}>Buffer: <span style={{color:buffer>0?"#34d399":"#f87171",fontWeight:600}}>${buffer.toLocaleString("en-US",{minimumFractionDigits:2})}</span></div>
+                      </div>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+                        {[
+                          {label:"CURRENT BALANCE",value:`$${balance.toLocaleString("en-US",{minimumFractionDigits:2})}`,color:"#e2e8f0"},
+                          {label:"MLL FLOOR",value:`$${currentMll.toLocaleString("en-US",{minimumFractionDigits:2})}`,color:mllLocked?"#34d399":"#f87171"},
+                          {label:"STATUS",value:mllLocked?"LOCKED 🔒":"TRAILING ↑",color:mllLocked?"#34d399":"#fbbf24"},
+                        ].map(({label,value,color})=>(
+                          <div key={label}>
+                            <div style={{fontSize:10,color:"#4a5568",letterSpacing:"1px",marginBottom:3,fontFamily:"'Syne',sans-serif"}}>{label}</div>
+                            <div style={{fontSize:13,color,fontWeight:600}}>{value}</div>
+                          </div>
+                        ))}
+                      </div>
+                      {!mllLocked&&<div style={{marginTop:8,fontSize:11,color:"#6b7280"}}>MLL locks at ${startBalance.toLocaleString()} once your balance reaches ${(startBalance+maxDrawdownAmt).toLocaleString()}</div>}
+                      {mllLocked&&<div style={{marginTop:8,fontSize:11,color:"#34d399"}}>Your floor is permanently locked at ${startBalance.toLocaleString()}. Only breach is going below this.</div>}
+                    </div>
+                  </div>
+                )}
+
+                {/* Account Balance Chart - funded always */}
+                {state.phase==="funded"&&mllHistory.length>0&&(
+                  <div className="card" style={{padding:20,marginBottom:20,position:"relative"}}>
+                    <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13,letterSpacing:"1px",color:"#9ca3af",marginBottom:16}}>ACCOUNT BALANCE CHART</div>
+                    {(()=>{
+                      const W=800,H=200,pad={t:20,b:30,l:70,r:80};
+                      const iW=W-pad.l-pad.r, iH=H-pad.t-pad.b;
+                      const vals=mllHistory.map(d=>d.balance);
+                      const mlls=mllHistory.map(d=>d.mll);
+                      const allVals=[...vals,...mlls];
+                      const minV=Math.min(...allVals)*0.999;
+                      const maxV=Math.max(...allVals)*1.001;
+                      const xStep=mllHistory.length>1?iW/(mllHistory.length-1):iW;
+                      const yScale=v=>iH-((v-minV)/(maxV-minV))*iH;
+                      const xScale=i=>i*xStep;
+                      const balPath=mllHistory.map((d,i)=>`${i===0?"M":"L"}${pad.l+xScale(i)},${pad.t+yScale(d.balance)}`).join(" ");
+                      const mllPath=mllHistory.map((d,i)=>`${i===0?"M":"L"}${pad.l+xScale(i)},${pad.t+yScale(d.mll)}`).join(" ");
+                      const payoutDates=new Set((state.payouts||[]).map(p=>p.date));
+                      return (
+                        <div style={{position:"relative",overflowX:"auto"}}>
+                          <svg width={W} height={H} style={{display:"block",minWidth:300}}>
+                            {/* Grid lines */}
+                            {[0,0.25,0.5,0.75,1].map(t=>{
+                              const y=pad.t+t*iH;
+                              const val=maxV-(t*(maxV-minV));
+                              return <g key={t}>
+                                <line x1={pad.l} y1={y} x2={W-pad.r} y2={y} stroke="#1a2332" strokeWidth="1"/>
+                                <text x={pad.l-6} y={y+4} textAnchor="end" fill="#4a5568" fontSize="10">${(val/1000).toFixed(0)}k</text>
+                              </g>;
+                            })}
+                            {/* Start balance reference line */}
+                            <line x1={pad.l} y1={pad.t+yScale(startBalance)} x2={W-pad.r} y2={pad.t+yScale(startBalance)} stroke="#374151" strokeWidth="1" strokeDasharray="4,4"/>
+                            <text x={W-pad.r-2} y={pad.t+yScale(startBalance)+4} fill="#6b7280" fontSize="9">Start</text>
+                            {/* MLL area fill */}
+                            <path d={`${mllPath} L${pad.l+xScale(mllHistory.length-1)},${pad.t+iH} L${pad.l},${pad.t+iH} Z`} fill="rgba(239,68,68,0.06)"/>
+                            {/* Balance area */}
+                            <path d={`${balPath} L${pad.l+xScale(mllHistory.length-1)},${pad.t+iH} L${pad.l},${pad.t+iH} Z`} fill="rgba(52,211,153,0.06)"/>
+                            {/* MLL line */}
+                            <path d={mllPath} fill="none" stroke="#ef4444" strokeWidth="1.5" strokeDasharray="5,3"/>
+                            {/* Balance line */}
+                            <path d={balPath} fill="none" stroke="#34d399" strokeWidth="2"/>
+                            {/* Dots only on traded days */}
+                            {mllHistory.map((d,i)=>{
+                              if(i===0||!d.hasTraded)return null;
+                              const cx=pad.l+xScale(i), cy=pad.t+yScale(d.balance);
+                              const isPayout=payoutDates.has(d.date);
+                              return <g key={i}>
+                                <circle cx={cx} cy={cy} r={isPayout?7:5} fill={isPayout?"#fbbf24":d.pnl>=0?"#34d399":"#f87171"} stroke="#0a0c0f" strokeWidth="2" style={{cursor:"pointer"}}
+                                  onClick={()=>setChartPopup(chartPopup?.date===d.date?null:{date:d.date,pnl:d.pnl,balance:d.balance,mll:d.mll,locked:d.locked,isPayout,cx,cy})}/>
+                                {isPayout&&<text x={cx} y={cy-10} textAnchor="middle" fill="#fbbf24" fontSize="9">$</text>}
+                              </g>;
+                            })}
+                            {/* X axis dates */}
+                            {mllHistory.filter((_,i)=>i>0&&(i===1||i===mllHistory.length-1||mllHistory.length<=6)).map((d,_,arr)=>{
+                              const origI=mllHistory.indexOf(d);
+                              return <text key={d.date} x={pad.l+xScale(origI)} y={H-4} textAnchor="middle" fill="#4a5568" fontSize="9">{d.date?.slice(5)}</text>;
+                            })}
+                          </svg>
+                          {/* Dot popup */}
+                          {chartPopup&&(
+                            <div style={{position:"absolute",top:chartPopup.cy-10,left:Math.min(chartPopup.cx+10,W-180),background:"#0f1419",border:"1px solid #1a2332",borderRadius:10,padding:"10px 14px",minWidth:160,zIndex:10,boxShadow:"0 4px 20px rgba(0,0,0,0.5)"}}>
+                              <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                                <span style={{fontSize:11,color:"#9ca3af"}}>{chartPopup.date}</span>
+                                <span onClick={()=>setChartPopup(null)} style={{color:"#4a5568",cursor:"pointer",fontSize:13}}>✕</span>
+                              </div>
+                              <div style={{fontSize:16,fontWeight:700,color:chartPopup.pnl>=0?"#34d399":"#f87171",marginBottom:4}}>{fmt(chartPopup.pnl)}</div>
+                              <div style={{fontSize:11,color:"#6b7280"}}>Balance: ${chartPopup.balance.toLocaleString("en-US",{minimumFractionDigits:2})}</div>
+                              <div style={{fontSize:11,color:chartPopup.locked?"#34d399":"#f87171"}}>MLL: ${chartPopup.mll.toLocaleString("en-US",{minimumFractionDigits:2})} {chartPopup.locked?"🔒":""}</div>
+                              {chartPopup.isPayout&&<div style={{fontSize:11,color:"#fbbf24",marginTop:3}}>💰 Payout requested</div>}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                    <div style={{display:"flex",gap:16,marginTop:12}}>
+                      {[["#34d399","Balance"],["#ef4444","MLL Floor (dashed)"],["#fbbf24","Payout day"],["#374151","Start balance"]].map(([c,l])=>(
+                        <div key={l} style={{display:"flex",alignItems:"center",gap:5}}>
+                          <div style={{width:12,height:3,background:c,borderRadius:2}}/>
+                          <span style={{fontSize:11,color:"#6b7280"}}>{l}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="card" style={{padding:20}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+                    <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13,letterSpacing:"1px",color:"#9ca3af"}}>RECENT TRADES</div>
+                    <button className="btn-outline" style={{padding:"6px 14px",fontSize:12}} onClick={()=>setView("log")}>+ Log Trade</button>
+                  </div>
+                  {currentTrades.length===0?(
+                    <div style={{textAlign:"center",padding:"40px 0",color:"#4a5568"}}>
+                      <div style={{fontSize:32,marginBottom:8}}>📊</div>
+                      <div>No trades yet. Start logging!</div>
+                    </div>
+                  ):[...currentTrades].filter(t=>!t.isPayout).reverse().slice(0,5).map(t=>(
+                    <div key={t.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 0",borderBottom:"1px solid #0f1419"}}>
+                      <div style={{display:"flex",gap:12,alignItems:"center"}}>
+                        <div style={{background:t.pnl>=0?"rgba(52,211,153,0.1)":"rgba(248,113,113,0.1)",border:`1px solid ${t.pnl>=0?"rgba(52,211,153,0.3)":"rgba(248,113,113,0.3)"}`,borderRadius:6,padding:"2px 8px",fontSize:12,color:t.pnl>=0?"#34d399":"#f87171",fontWeight:600}}>{t.pair}</div>
+                        <div style={{fontSize:12,color:"#4a5568"}}>{t.date} · {t.session}</div>
+                      </div>
+                      <div style={{fontSize:15,fontWeight:500,color:t.pnl>=0?"#34d399":"#f87171"}}>{fmt(t.pnl)}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* LOG TRADE */}
+            {view==="log"&&(
+              <div style={{maxWidth:620,margin:"0 auto"}}>
+                <div className="card" style={{padding:28}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24}}>
+                    <div style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:18}}>Add New Trade</div>
+                    <button onClick={()=>setView("dashboard")} style={{background:"none",border:"none",color:"#4a5568",fontSize:20,cursor:"pointer"}}>✕</button>
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+                    {/* Symbol */}
+                    <div>
+                      <label style={{fontSize:11,color:"#9ca3af",display:"block",marginBottom:6,fontFamily:"'Syne',sans-serif",fontWeight:600,letterSpacing:"0.5px"}}>SYMBOL *</label>
+                      <select className="input-field" value={tradeForm.symbol} onChange={e=>setTradeForm(f=>({...f,symbol:e.target.value}))}>
+                        <option value="">Select Contract...</option>
+                        <optgroup label="Nasdaq Futures">
+                          <option>NQ — E-mini Nasdaq ($20/pt)</option>
+                          <option>MNQ — Micro Nasdaq ($2/pt)</option>
+                        </optgroup>
+                        <optgroup label="S&P 500 Futures">
+                          <option>ES — E-mini S&P500 ($50/pt)</option>
+                          <option>MES — Micro S&P500 ($5/pt)</option>
+                        </optgroup>
+                        <optgroup label="Other">
+                          <option>Other / Custom</option>
+                        </optgroup>
+                      </select>
+                    </div>
+                    {/* Date */}
+                    <div>
+                      <label style={{fontSize:11,color:"#9ca3af",display:"block",marginBottom:6,fontFamily:"'Syne',sans-serif",fontWeight:600,letterSpacing:"0.5px"}}>DATE *</label>
+                      <input type="date" className="input-field" value={tradeForm.date} onChange={e=>setTradeForm(f=>({...f,date:e.target.value}))}/>
+                    </div>
+                    {/* Direction */}
+                    <div>
+                      <label style={{fontSize:11,color:"#9ca3af",display:"block",marginBottom:6,fontFamily:"'Syne',sans-serif",fontWeight:600,letterSpacing:"0.5px"}}>DIRECTION *</label>
+                      <select className="input-field" value={tradeForm.direction} onChange={e=>setTradeForm(f=>({...f,direction:e.target.value}))}>
+                        <option value="">Select...</option>
+                        <option>↑ Long</option>
+                        <option>↓ Short</option>
+                      </select>
+                    </div>
+                    {/* Contracts */}
+                    <div>
+                      <label style={{fontSize:11,color:"#9ca3af",display:"block",marginBottom:6,fontFamily:"'Syne',sans-serif",fontWeight:600,letterSpacing:"0.5px"}}>CONTRACTS</label>
+                      <input type="number" className="input-field" min="1" value={tradeForm.contracts} onChange={e=>setTradeForm(f=>({...f,contracts:e.target.value}))}/>
+                    </div>
+                    {/* Entry Price */}
+                    <div>
+                      <label style={{fontSize:11,color:"#9ca3af",display:"block",marginBottom:6,fontFamily:"'Syne',sans-serif",fontWeight:600,letterSpacing:"0.5px"}}>ENTRY PRICE *</label>
+                      <input type="number" className="input-field" placeholder="0.00" value={tradeForm.entryPrice} onChange={e=>setTradeForm(f=>({...f,entryPrice:e.target.value}))}/>
+                    </div>
+                    {/* Exit Price */}
+                    <div>
+                      <label style={{fontSize:11,color:"#9ca3af",display:"block",marginBottom:6,fontFamily:"'Syne',sans-serif",fontWeight:600,letterSpacing:"0.5px"}}>EXIT PRICE *</label>
+                      <input type="number" className="input-field" placeholder="0.00" value={tradeForm.exitPrice} onChange={e=>setTradeForm(f=>({...f,exitPrice:e.target.value}))}/>
+                    </div>
+                    {/* Entry Time */}
+                    <div>
+                      <label style={{fontSize:11,color:"#9ca3af",display:"block",marginBottom:6,fontFamily:"'Syne',sans-serif",fontWeight:600,letterSpacing:"0.5px"}}>ENTRY TIME</label>
+                      <div style={{display:"flex",gap:8}}>
+                        <input className="input-field" placeholder="10:10" value={tradeForm.entryTime} onChange={e=>setTradeForm(f=>({...f,entryTime:e.target.value}))} style={{flex:1}}/>
+                        <select className="input-field" value={tradeForm.entryAmPm} onChange={e=>setTradeForm(f=>({...f,entryAmPm:e.target.value}))} style={{width:70}}>
+                          <option>AM</option><option>PM</option>
+                        </select>
+                      </div>
+                    </div>
+                    {/* Exit Time */}
+                    <div>
+                      <label style={{fontSize:11,color:"#9ca3af",display:"block",marginBottom:6,fontFamily:"'Syne',sans-serif",fontWeight:600,letterSpacing:"0.5px"}}>EXIT TIME</label>
+                      <div style={{display:"flex",gap:8}}>
+                        <input className="input-field" placeholder="10:15" value={tradeForm.exitTime} onChange={e=>setTradeForm(f=>({...f,exitTime:e.target.value}))} style={{flex:1}}/>
+                        <select className="input-field" value={tradeForm.exitAmPm} onChange={e=>setTradeForm(f=>({...f,exitAmPm:e.target.value}))} style={{width:70}}>
+                          <option>AM</option><option>PM</option>
+                        </select>
+                      </div>
+                    </div>
+                    {/* Stop Loss */}
+                    <div>
+                      <label style={{fontSize:11,color:"#9ca3af",display:"block",marginBottom:6,fontFamily:"'Syne',sans-serif",fontWeight:600,letterSpacing:"0.5px"}}>STOP LOSS (OPTIONAL)</label>
+                      <input type="number" className="input-field" placeholder="0.00" value={tradeForm.stopLoss} onChange={e=>setTradeForm(f=>({...f,stopLoss:e.target.value}))}/>
+                    </div>
+                    {/* Tags */}
+                    <div>
+                      <label style={{fontSize:11,color:"#9ca3af",display:"block",marginBottom:6,fontFamily:"'Syne',sans-serif",fontWeight:600,letterSpacing:"0.5px"}}>TAGS (COMMA SEPARATED)</label>
+                      <input className="input-field" placeholder="breakout, momentum" value={tradeForm.tags} onChange={e=>setTradeForm(f=>({...f,tags:e.target.value}))}/>
+                    </div>
+                  </div>
+
+                  {/* P&L Preview */}
+                  {tradeForm.entryPrice&&tradeForm.exitPrice&&tradeForm.direction&&(()=>{
+                    const p=calcPnl();
+                    const sl=parseFloat(tradeForm.stopLoss);
+                    const ep=parseFloat(tradeForm.entryPrice),xp=parseFloat(tradeForm.exitPrice);
+                    const reward=Math.abs(xp-ep), risk=Math.abs(ep-sl);
+                    const rr=(!isNaN(sl)&&sl>0&&risk>0)?(reward/risk):null;
+                    return p!==null?<div style={{margin:"12px 0",padding:"10px 16px",background:p>=0?"rgba(52,211,153,0.1)":"rgba(248,113,113,0.1)",border:`1px solid ${p>=0?"rgba(52,211,153,0.3)":"rgba(248,113,113,0.3)"}`,borderRadius:8}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                        <span style={{fontSize:12,color:"#9ca3af"}}>Estimated P&L</span>
+                        <span style={{fontSize:16,fontWeight:600,color:p>=0?"#34d399":"#f87171"}}>{fmt(p)}</span>
+                      </div>
+                      {rr!==null&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:6}}>
+                        <span style={{fontSize:12,color:"#9ca3af"}}>R:R Ratio</span>
+                        <span style={{fontSize:14,fontWeight:600,color:rr>=1?"#34d399":"#f87171"}}>{rr.toFixed(2)}R {rr>=2?"🔥":rr>=1?"✓":"⚠️"}</span>
+                      </div>}
+                    </div>:null;
+                  })()}
+
+                  {/* Rating */}
+                  <div style={{marginTop:16}}>
+                    <label style={{fontSize:11,color:"#9ca3af",display:"block",marginBottom:8,fontFamily:"'Syne',sans-serif",fontWeight:600,letterSpacing:"0.5px"}}>RATING (1–5)</label>
+                    <div style={{display:"flex",gap:6}}>
+                      {[1,2,3,4,5].map(s=>(
+                        <span key={s} onClick={()=>setTradeForm(f=>({...f,rating:s}))} style={{fontSize:28,cursor:"pointer",color:s<=tradeForm.rating?"#f59e0b":"#374151",transition:"color 0.15s"}}>★</span>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Notes */}
+                  <div style={{marginTop:16}}>
+                    <label style={{fontSize:11,color:"#9ca3af",display:"block",marginBottom:6,fontFamily:"'Syne',sans-serif",fontWeight:600,letterSpacing:"0.5px"}}>NOTES / JOURNAL</label>
+                    <textarea className="input-field" placeholder="What worked? What to improve?" rows={3} style={{resize:"vertical"}} value={tradeForm.notes} onChange={e=>setTradeForm(f=>({...f,notes:e.target.value}))}/>
+                  </div>
+
+                  {formError&&<div style={{color:"#f87171",fontSize:13,marginTop:12}}>⚠ {formError}</div>}
+
+                  <div style={{display:"flex",gap:12,marginTop:20}}>
+                    <button className="btn-outline" style={{flex:1,padding:"12px"}} onClick={()=>setView("dashboard")}>Cancel</button>
+                    <button className="btn-green" style={{flex:2,padding:"14px",fontSize:15}} onClick={logTrade}>Save Trade</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* HISTORY */}
+            {view==="history"&&(
+              <div>
+                <div style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:18,marginBottom:20}}>Trade History — <span style={{color:"#4a5568",fontWeight:400}}>{currentTrades.length} trades</span></div>
+                {Object.entries(getDailyPnl(currentTrades.filter(t=>!t.isPayout))).sort((a,b)=>b[0].localeCompare(a[0])).map(([date,dayPnl])=>(
+                  <div key={date} style={{marginBottom:16}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"1px solid #1a2332",marginBottom:8}}>
+                      <span style={{fontFamily:"'Syne',sans-serif",fontWeight:600,fontSize:13,color:"#9ca3af"}}>{date}</span>
+                      <span style={{fontSize:13,color:dayPnl>=0?"#34d399":"#f87171",fontWeight:600}}>Day: {fmt(dayPnl)}</span>
+                    </div>
+                    {currentTrades.filter(t=>t.date===date&&!t.isPayout).map(t=>{
+                      const POINT_VALUES={"NQ":20,"MNQ":2,"ES":50,"MES":5};
+                      const sym=(t.symbol||t.pair||"").split("—")[0].trim();
+                      const pv=POINT_VALUES[sym]||1;
+                      const c=parseInt(t.contracts)||1;
+                      const dir=t.direction?.includes("Long")?1:-1;
+                      const ep=parseFloat(t.entryPrice),xp=parseFloat(t.exitPrice),sl=parseFloat(t.stopLoss);
+                      const reward=Math.abs(xp-ep);
+                      const risk=Math.abs(ep-sl);
+                      const rr=(!isNaN(sl)&&sl>0&&risk>0)?(reward/risk):null;
+                      return (
+                      <div key={t.id} className="card" style={{padding:"12px 16px",marginBottom:6,display:"flex",gap:12}}>
+                        <div style={{flex:1}}>
+                          <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:4,flexWrap:"wrap"}}>
+                            <span style={{fontWeight:600,color:"#e2e8f0",fontSize:14}}>{t.pair}</span>
+                            {t.direction&&<span style={{fontSize:11,padding:"1px 7px",borderRadius:4,background:t.direction.includes("Long")?"rgba(52,211,153,0.15)":"rgba(248,113,113,0.15)",color:t.direction.includes("Long")?"#34d399":"#f87171"}}>{t.direction}</span>}
+                            {t.rating>0&&<span style={{fontSize:11,color:"#f59e0b"}}>{"★".repeat(t.rating)}</span>}
+                            {t.entryTime&&<span style={{fontSize:11,color:"#4a5568"}}>{t.entryTime} → {t.exitTime}</span>}
+                            {rr!==null&&<span style={{fontSize:11,padding:"1px 7px",borderRadius:4,background:rr>=1?"rgba(52,211,153,0.15)":"rgba(248,113,113,0.15)",color:rr>=1?"#34d399":"#f87171",fontWeight:600}}>R:R {rr.toFixed(2)}</span>}
+                          </div>
+                          {rr!==null&&<div style={{fontSize:11,color:"#4a5568",marginBottom:2}}>Risk: ${(risk*c*pv).toFixed(2)} · Reward: ${(reward*c*pv).toFixed(2)}</div>}
+                          {t.tags&&<div style={{fontSize:11,color:"#6b7280",marginBottom:2}}>{t.tags}</div>}
+                          {t.notes&&<div style={{fontSize:12,color:"#6b7280"}}>{t.notes}</div>}
+                        </div>
+                        <div style={{fontSize:16,fontWeight:500,color:t.pnl>=0?"#34d399":"#f87171",whiteSpace:"nowrap"}}>{fmt(t.pnl)}</div>
+                      </div>
+                      );
+                    })}
+                  </div>
+                ))}
+                {currentTrades.length===0&&<div style={{textAlign:"center",padding:"60px 0",color:"#4a5568"}}>No trades logged yet.</div>}
+              </div>
+            )}
+
+            {/* RULES */}
+            {view==="rules"&&(
+              <div>
+                <div style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:18,marginBottom:20}}>Account Rules — PRO+</div>
+                <div className="card" style={{overflow:"hidden"}}>
+                  {[
+                    ["Environment",state.rules.environment],
+                    ["Withdrawals",state.rules.withdrawals],
+                    ["Profit Split",state.rules.profitSplit],
+                    ["Maximum # of Accounts",state.rules.maxAccounts],
+                    ["Maximum Withdrawal Amount",state.rules.maxWithdrawalAmount],
+                    ["Buffer Requirement",state.bufferRequirement?`$${Number(state.bufferRequirement).toLocaleString()}`:state.rules.bufferRequirement||"None"],
+                    ["Daily Loss Rule",state.maxDailyLossPct===0?"OFF":`${state.maxDailyLossPct}% Max Daily Loss`],
+                    ["Drawdown",`${state.drawdownType} — $${(state.maxDrawdownAmt||2000).toLocaleString()}`],
+                    ["Consistency Rule",state.rules.consistencyRule||"None"],
+                    ["News Rule",state.rules.newsRule],
+                    ["Scaling Plan",state.rules.scalingPlan],
+                    ["Min Trading Days",`${state.minTradingDays} days`],
+                    ["Profit Target",`${state.profitTarget}%`],
+                    ["Account Size",`$${state.accountSize.toLocaleString()}`],
+                  ].map(([key,val],i)=>(
+                    <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 20px",borderBottom:i<13?"1px solid #0f1419":"none"}}>
+                      <span style={{fontSize:13,color:"#9ca3af"}}>{key}</span>
+                      <span style={{fontSize:13,color:"#34d399",fontWeight:500}}>{val}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {showAllTime&&(
+            <div className="modal-overlay" onClick={()=>setShowAllTime(false)}>
+              <div onClick={e=>e.stopPropagation()} style={{background:"#0f1419",border:"1px solid #1a2332",borderRadius:16,padding:28,maxWidth:560,width:"100%",maxHeight:"85vh",overflowY:"auto"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24}}>
+                  <div style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:20}}>📊 All Time Stats</div>
+                  <button onClick={()=>setShowAllTime(false)} style={{background:"none",border:"none",color:"#4a5568",fontSize:20,cursor:"pointer"}}>✕</button>
+                </div>
+
+                {/* Summary Row */}
+                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:24}}>
+                  {[
+                    {label:"EVALS PASSED",value:(state.allTime?.passedEvals||[]).length,color:"#34d399"},
+                    {label:"ACCOUNTS BLOWN",value:(state.allTime?.blownAccounts||[]).length,color:"#ef4444"},
+                    {label:"TOTAL PAYOUTS",value:(state.allTime?.payouts||[]).length,color:"#60a5fa"},
+                    {label:"TOTAL EARNED",value:`$${(state.allTime?.payouts||[]).reduce((a,p)=>a+p.amount,0).toLocaleString("en-US",{minimumFractionDigits:2})}`,color:"#34d399"},
+                  ].map(({label,value,color})=>(
+                    <div key={label} style={{background:"#0a0c0f",borderRadius:10,padding:"12px",border:"1px solid #1a2332",textAlign:"center"}}>
+                      <div style={{fontSize:10,color:"#4a5568",letterSpacing:"1px",marginBottom:6,fontFamily:"'Syne',sans-serif",fontWeight:600}}>{label}</div>
+                      <div style={{fontSize:20,fontWeight:700,color}}>{value}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Evals Passed */}
+                <div style={{marginBottom:24}}>
+                  <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13,color:"#34d399",letterSpacing:"1px",marginBottom:12}}>🏆 EVALS PASSED</div>
+                  {(state.allTime?.passedEvals||[]).length===0
+                    ?<div style={{color:"#4a5568",fontSize:13,padding:"12px 0"}}>No evals passed yet.</div>
+                    :[...(state.allTime?.passedEvals||[])].reverse().map(e=>(
+                      <div key={e.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",background:"#0a0c0f",borderRadius:8,marginBottom:6,border:"1px solid rgba(52,211,153,0.15)"}}>
+                        <div>
+                          <div style={{fontSize:13,color:"#e2e8f0",fontWeight:600}}>${(e.accountSize||0).toLocaleString()} Account</div>
+                          <div style={{fontSize:11,color:"#4a5568"}}>{e.date} · {e.days||0} winning days</div>
+                        </div>
+                        <div style={{textAlign:"right"}}>
+                          <div style={{fontSize:13,color:"#34d399",fontWeight:600}}>+${(e.pnl||0).toFixed(2)} eval P&L</div>
+                          <div style={{fontSize:11,padding:"2px 8px",borderRadius:4,background:"rgba(52,211,153,0.1)",color:"#34d399",marginTop:3,display:"inline-block"}}>PASSED</div>
+                        </div>
+                      </div>
+                    ))
+                  }
+                </div>
+
+                {/* Blown Accounts */}
+                <div style={{marginBottom:24}}>
+                  <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13,color:"#ef4444",letterSpacing:"1px",marginBottom:12}}>💥 BREACHED ACCOUNTS</div>
+                  {(state.allTime?.blownAccounts||[]).length===0
+                    ?<div style={{color:"#4a5568",fontSize:13,padding:"12px 0"}}>No breached accounts. Keep it up!</div>
+                    :[...(state.allTime?.blownAccounts||[])].reverse().map(b=>(
+                      <div key={b.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",background:"#0a0c0f",borderRadius:8,marginBottom:6,border:"1px solid rgba(239,68,68,0.15)"}}>
+                        <div>
+                          <div style={{fontSize:13,color:"#e2e8f0",fontWeight:600}}>${(b.accountSize||0).toLocaleString()} — {b.phase==="funded"?"Funded":"Eval"}</div>
+                          <div style={{fontSize:11,color:"#4a5568"}}>{b.date}</div>
+                          <div style={{fontSize:11,color:"#ef4444",marginTop:2}}>{b.reason}</div>
+                        </div>
+                        <div style={{textAlign:"right"}}>
+                          <div style={{fontSize:13,color:"#f87171",fontWeight:600}}>-${Math.abs(b.pnl||0).toFixed(2)}</div>
+                          <div style={{fontSize:11,padding:"2px 8px",borderRadius:4,background:"rgba(239,68,68,0.1)",color:"#ef4444",marginTop:3,display:"inline-block"}}>BLOWN</div>
+                        </div>
+                      </div>
+                    ))
+                  }
+                </div>
+
+                {/* Payouts */}
+                <div>
+                  <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:13,color:"#60a5fa",letterSpacing:"1px",marginBottom:12}}>💰 ALL PAYOUTS</div>
+                  {(state.allTime?.payouts||[]).length===0
+                    ?<div style={{color:"#4a5568",fontSize:13,padding:"12px 0"}}>No payouts yet.</div>
+                    :[...(state.allTime?.payouts||[])].reverse().map(p=>(
+                      <div key={p.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",background:"#0a0c0f",borderRadius:8,marginBottom:6,border:"1px solid rgba(96,165,250,0.15)"}}>
+                        <div>
+                          <div style={{fontSize:13,color:"#e2e8f0",fontWeight:600}}>+${p.amount.toLocaleString("en-US",{minimumFractionDigits:2})}</div>
+                          <div style={{fontSize:11,color:"#4a5568"}}>{p.date} · ${(p.accountSize||0).toLocaleString()} account</div>
+                        </div>
+                        <div style={{fontSize:11,padding:"2px 8px",borderRadius:4,background:"rgba(251,191,36,0.1)",color:"#fbbf24",border:"1px solid rgba(251,191,36,0.2)"}}>Pending</div>
+                      </div>
+                    ))
+                  }
+                </div>
+
+                {/* Delete button at bottom */}
+                <div style={{marginTop:24,paddingTop:16,borderTop:"1px solid #1a2332",textAlign:"center"}}>
+                  <button onClick={()=>setShowTotalReset(true)} style={{padding:"12px 28px",background:"rgba(127,29,29,0.5)",border:"1px solid #ef4444",borderRadius:8,color:"#fca5a5",cursor:"pointer",fontFamily:"'Syne',sans-serif",fontSize:14,fontWeight:700}}>🗑 TOTAL RESET — Wipe Everything</button>
+                  <div style={{fontSize:11,color:"#4a5568",marginTop:8}}>Deletes all trades, history, payouts, evals. Cannot be undone.</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showPayoutModal&&(
+            <div className="modal-overlay">
+              <div className="card" style={{padding:32,maxWidth:400,width:"100%"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+                  <div style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:20}}>💰 Request Payout</div>
+                  <button onClick={()=>setShowPayoutModal(false)} style={{background:"none",border:"none",color:"#4a5568",fontSize:20,cursor:"pointer"}}>✕</button>
+                </div>
+                <div style={{background:"#0a0c0f",borderRadius:10,padding:16,marginBottom:20}}>
+                  {[
+                    ["Total Profit",fmt(pnl)],
+                    ["Your Cut (80%)",`$${(pnl*0.8).toFixed(2)}`],
+                    ["Already Requested",`$${((state.payouts||[]).reduce((a,p)=>a+p.amount,0)).toFixed(2)}`],
+                    ["Available Now",`$${Math.max(0,pnl*0.8-(state.payouts||[]).reduce((a,p)=>a+p.amount,0)).toFixed(2)}`],
+                  ].map(([k,v],i)=>(
+                    <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:i<3?"1px solid #1a2332":"none"}}>
+                      <span style={{color:"#6b7280",fontSize:13}}>{k}</span>
+                      <span style={{color:i===3?"#34d399":"#e2e8f0",fontWeight:i===3?600:400,fontSize:13}}>{v}</span>
+                    </div>
+                  ))}
+                </div>
+                <label style={{fontSize:11,color:"#9ca3af",display:"block",marginBottom:8,fontFamily:"'Syne',sans-serif",fontWeight:600,letterSpacing:"0.5px"}}>AMOUNT TO REQUEST ($)</label>
+                <input type="number" className="input-field" placeholder="Enter amount..." value={payoutAmount} onChange={e=>setPayoutAmount(e.target.value)} style={{marginBottom:12}}/>
+                {payoutError&&<div style={{color:"#f87171",fontSize:13,marginBottom:12}}>⚠ {payoutError}</div>}
+                <div style={{display:"flex",gap:12}}>
+                  <button className="btn-outline" style={{flex:1,padding:"12px"}} onClick={()=>setShowPayoutModal(false)}>Cancel</button>
+                  <button className="btn-green" style={{flex:1,padding:"12px",fontSize:14}} onClick={requestPayout}>Request →</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showAllTime&&(
+            <div className="modal-overlay" onClick={()=>setShowAllTime(false)}>
+              <div className="card" style={{padding:28,maxWidth:500,width:"100%",maxHeight:"80vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24}}>
+                  <div style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:20}}>📊 All Time Stats</div>
+                  <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                    <button onClick={()=>setShowTotalReset(true)} style={{fontSize:11,padding:"6px 12px",background:"rgba(127,29,29,0.5)",border:"1px solid #ef4444",borderRadius:6,color:"#fca5a5",cursor:"pointer",fontFamily:"'Syne',sans-serif",fontWeight:700,letterSpacing:"0.3px"}}>🗑 Total Reset</button>
+                    <button onClick={()=>setShowAllTime(false)} style={{background:"none",border:"none",color:"#4a5568",fontSize:20,cursor:"pointer"}}>✕</button>
+                  </div>
+                </div>
+
+                {/* Summary Row */}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:24}}>
+                  {[
+                    {label:"EVALS PASSED",value:(state.allTime?.passedEvals||[]).length,color:"#34d399"},
+                    {label:"ACCOUNTS BLOWN",value:(state.allTime?.blownAccounts||[]).length,color:"#ef4444"},
+                    {label:"TOTAL PAID OUT",value:`$${(state.allTime?.payouts||[]).reduce((a,p)=>a+p.amount,0).toLocaleString("en-US",{minimumFractionDigits:2})}`,color:"#34d399"},
+                  ].map(({label,value,color})=>(
+                    <div key={label} style={{background:"#0a0c0f",borderRadius:8,padding:"12px",border:"1px solid #1a2332",textAlign:"center"}}>
+                      <div style={{fontSize:10,color:"#4a5568",letterSpacing:"1px",marginBottom:6,fontFamily:"'Syne',sans-serif",fontWeight:600}}>{label}</div>
+                      <div style={{fontSize:20,fontWeight:700,color}}>{value}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Passed Evals */}
+                <div style={{marginBottom:20}}>
+                  <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:12,color:"#34d399",letterSpacing:"1px",marginBottom:10}}>🏆 PASSED EVALS</div>
+                  {(state.allTime?.passedEvals||[]).length===0
+                    ?<div style={{color:"#4a5568",fontSize:13,padding:"12px 0"}}>No passed evals yet</div>
+                    :[...(state.allTime?.passedEvals||[])].reverse().map(e=>(
+                      <div key={e.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 12px",background:"#0a0c0f",borderRadius:8,marginBottom:6,border:"1px solid #1a2332"}}>
+                        <div>
+                          <div style={{fontSize:13,color:"#e2e8f0",fontWeight:600}}>${(e.accountSize||0).toLocaleString()} Account</div>
+                          <div style={{fontSize:11,color:"#4a5568",marginTop:2}}>{e.date} · {e.days} winning days</div>
+                        </div>
+                        <div style={{fontSize:14,color:"#34d399",fontWeight:600}}>+${(e.pnl||0).toFixed(2)}</div>
+                      </div>
+                    ))
+                  }
+                </div>
+
+                {/* Blown Accounts */}
+                <div style={{marginBottom:20}}>
+                  <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:12,color:"#ef4444",letterSpacing:"1px",marginBottom:10}}>💥 BLOWN ACCOUNTS</div>
+                  {(state.allTime?.blownAccounts||[]).length===0
+                    ?<div style={{color:"#4a5568",fontSize:13,padding:"12px 0"}}>No blown accounts</div>
+                    :[...(state.allTime?.blownAccounts||[])].reverse().map(b=>(
+                      <div key={b.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 12px",background:"#0a0c0f",borderRadius:8,marginBottom:6,border:"1px solid #1a2332"}}>
+                        <div>
+                          <div style={{fontSize:13,color:"#e2e8f0",fontWeight:600}}>${(b.accountSize||0).toLocaleString()} — {b.phase==="funded"?"Funded":"Eval"}</div>
+                          <div style={{fontSize:11,color:"#6b7280",marginTop:2}}>{b.date} · {b.reason}</div>
+                        </div>
+                        <div style={{fontSize:14,color:"#ef4444",fontWeight:600}}>-${Math.abs(b.pnl||0).toFixed(2)}</div>
+                      </div>
+                    ))
+                  }
+                </div>
+
+                {/* All Payouts */}
+                <div>
+                  <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:12,color:"#fbbf24",letterSpacing:"1px",marginBottom:10}}>💰 ALL PAYOUTS</div>
+                  {(state.allTime?.payouts||[]).length===0
+                    ?<div style={{color:"#4a5568",fontSize:13,padding:"12px 0"}}>No payouts yet</div>
+                    :[...(state.allTime?.payouts||[])].reverse().map(p=>(
+                      <div key={p.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 12px",background:"#0a0c0f",borderRadius:8,marginBottom:6,border:"1px solid #1a2332"}}>
+                        <div>
+                          <div style={{fontSize:13,color:"#e2e8f0",fontWeight:600}}>${(p.accountSize||0).toLocaleString()} Account</div>
+                          <div style={{fontSize:11,color:"#4a5568",marginTop:2}}>{p.date}</div>
+                        </div>
+                        <div style={{fontSize:14,color:"#fbbf24",fontWeight:600}}>+${(p.amount||0).toLocaleString("en-US",{minimumFractionDigits:2})}</div>
+                      </div>
+                    ))
+                  }
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showPassModal&&(
+            <div className="modal-overlay">
+              <div className="card" style={{padding:32,maxWidth:400,width:"100%",textAlign:"center"}}>
+                <div style={{fontSize:48,marginBottom:16}}>🏆</div>
+                <div style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:22,marginBottom:8}}>EVALUATION PASSED!</div>
+                <div style={{color:"#9ca3af",marginBottom:24,fontSize:14}}>Congratulations! Move to your funded account and continue trading.</div>
+                <div style={{background:"#0a0c0f",borderRadius:8,padding:16,marginBottom:24}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}><span style={{color:"#4a5568"}}>Eval P&L</span><span className="pos">{fmt(pnl)}</span></div>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}><span style={{color:"#4a5568"}}>Trading Days</span><span style={{color:"#e2e8f0"}}>{tradingDays}</span></div>
+                  <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:"#4a5568"}}>Funded Balance</span><span style={{color:"#34d399"}}>${state.accountSize.toLocaleString("en-US",{minimumFractionDigits:2})}</span></div>
+                </div>
+                <div style={{display:"flex",gap:12}}>
+                  <button className="btn-outline" style={{flex:1,padding:"12px"}} onClick={()=>setShowPassModal(false)}>Cancel</button>
+                  <button className="btn-green" style={{flex:1,padding:"12px",fontSize:14}} onClick={passFunded}>Move to Funded →</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showTotalReset&&(
+            <div className="modal-overlay">
+              <div className="card" style={{padding:32,maxWidth:380,width:"100%",textAlign:"center"}}>
+                <div style={{fontSize:48,marginBottom:12}}>⚠️</div>
+                <div style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:20,color:"#ef4444",marginBottom:8}}>TOTAL RESET</div>
+                <div style={{color:"#9ca3af",fontSize:14,marginBottom:12}}>This permanently deletes:</div>
+                <div style={{background:"#0a0c0f",borderRadius:8,padding:"12px 16px",marginBottom:20,textAlign:"left"}}>
+                  {["All trades (eval + funded)","All-time history","All payouts","Account settings","Everything"].map((item,i)=>(
+                    <div key={i} style={{fontSize:13,color:"#f87171",padding:"3px 0"}}>✕ {item}</div>
+                  ))}
+                </div>
+                <div style={{color:"#6b7280",fontSize:12,marginBottom:20}}>You will start completely fresh. Cannot be undone.</div>
+                <div style={{display:"flex",gap:12}}>
+                  <button onClick={()=>setShowTotalReset(false)} className="btn-outline" style={{flex:1,padding:"12px",fontSize:14}}>Cancel</button>
+                  <button onClick={()=>{localStorage.removeItem("trading-journal-v1");window.location.reload();}} style={{flex:1,padding:"12px",background:"#ef4444",color:"#fff",border:"none",borderRadius:10,cursor:"pointer",fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:14}}>Yes, Wipe It All</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showResetConfirm&&(
+            <div className="modal-overlay">
+              <div className="card" style={{padding:28,maxWidth:360,width:"100%"}}>
+                <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:16,marginBottom:12}}>Reset Everything?</div>
+                <div style={{color:"#9ca3af",fontSize:14,marginBottom:20}}>This will delete all trades and account data.</div>
+                <div style={{display:"flex",gap:10}}>
+                  <button className="btn-outline" style={{flex:1,padding:"10px"}} onClick={()=>setShowResetConfirm(false)}>Cancel</button>
+                  <button style={{flex:1,padding:"10px",background:"#7f1d1d",color:"#fca5a5",border:"none",borderRadius:8,cursor:"pointer",fontFamily:"'Roboto', sans-serif,monospace"}} onClick={reset}>Reset All</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function Setup({state,setState,step,setStep}) {
+      const [form,setForm] = useState({
+        accountSize:25000,profitTarget:10,minTradingDays:3,
+        drawdownType:"End Of Day",maxDrawdownPct:5,maxDrawdownAmt:2000,
+        maxDailyLossPct:2,consistencyRule:"None",winDaysEnabled:true,
+      });
+
+      const finish = () => {
+        const bufferMap={25000:1000,50000:2000,100000:4000,150000:6000};
+        const bufferAmt=bufferMap[form.accountSize]||form.accountSize*0.04;
+        setState(s=>({...s,...form,phase:"eval",evalStartBalance:form.accountSize,fundedStartBalance:form.accountSize,
+          bufferRequirement:bufferAmt,evalStartDate:today(),rules:{...s.rules,consistencyRule:form.consistencyRule,bufferRequirement:`$${bufferAmt.toLocaleString()}`},
+          winDaysEnabled:form.winDaysEnabled,
+          evalTrades:[],fundedTrades:[]}));
+      };
+
+      const steps=[
+        {title:"Account Size",content:(
+          <div style={{display:"flex",flexDirection:"column",gap:12}}>
+            {[25000,50000,100000,150000].map(v=>{
+              const bm={25000:1000,50000:2000,100000:4000,150000:6000};
+              return <button key={v} onClick={()=>setForm(f=>({...f,accountSize:v}))} style={{padding:"14px 20px",background:form.accountSize===v?"rgba(52,211,153,0.15)":"#0a0c0f",border:`1px solid ${form.accountSize===v?"#34d399":"#1a2332"}`,borderRadius:10,color:form.accountSize===v?"#34d399":"#9ca3af",fontSize:16,cursor:"pointer",fontFamily:"'Syne',sans-serif",fontWeight:600,transition:"all 0.15s",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span>${v.toLocaleString()}</span>
+                <span style={{fontSize:12,opacity:0.6,fontFamily:"'Roboto', sans-serif,monospace",fontWeight:400}}>Buffer: ${bm[v].toLocaleString()} <span style={{color:"#34d399",opacity:1}}>(Funded)</span></span>
+              </button>;
+            })}
+          </div>
+        )},
+        {title:"Profit Target",content:(
+          <div>
+            <div style={{fontSize:14,color:"#9ca3af",marginBottom:16}}>What % profit to pass the evaluation?</div>
+            <div style={{display:"flex",flexDirection:"column",gap:12}}>
+              {[6,8,10,12,15].map(v=>(
+                <button key={v} onClick={()=>setForm(f=>({...f,profitTarget:v}))} style={{padding:"14px 20px",background:form.profitTarget===v?"rgba(52,211,153,0.15)":"#0a0c0f",border:`1px solid ${form.profitTarget===v?"#34d399":"#1a2332"}`,borderRadius:10,color:form.profitTarget===v?"#34d399":"#9ca3af",fontSize:15,cursor:"pointer",fontFamily:"'Syne',sans-serif",fontWeight:600,transition:"all 0.15s",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <span>{v}%</span><span style={{fontSize:13,opacity:0.6}}>${((form.accountSize*v)/100).toLocaleString()}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )},
+        {title:"Trading Days Rule",content:(
+          <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            <div style={{fontSize:13,color:"#6b7280",marginBottom:4}}>Do you need 5 trading days to pass the evaluation?</div>
+            {[
+              {val:true,label:"5 Trading Days",desc:"Must trade on 5 separate days before you can pass"},
+              {val:false,label:"None",desc:"No trading days requirement — pass on profit target alone"},
+            ].map(({val,label,desc})=>(
+              <button key={String(val)} onClick={()=>setForm(f=>({...f,winDaysEnabled:val,minTradingDays:val?5:0}))} style={{padding:"18px 20px",background:form.winDaysEnabled===val?"rgba(52,211,153,0.15)":"#0a0c0f",border:`1px solid ${form.winDaysEnabled===val?"#34d399":"#1a2332"}`,borderRadius:10,color:"#e2e8f0",cursor:"pointer",textAlign:"left",transition:"all 0.15s"}}>
+                <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:15,color:form.winDaysEnabled===val?"#34d399":"#e2e8f0",marginBottom:4}}>{label}</div>
+                <div style={{fontSize:12,color:"#6b7280"}}>{desc}</div>
+              </button>
+            ))}
+          </div>
+        )},
+        {title:"Consistency Rule",content:(
+          <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            <div style={{fontSize:13,color:"#6b7280",marginBottom:4}}>Should your biggest trading day be limited to 50% of total profit?</div>
+            {[{val:"50% Consistency",label:"50% Consistency",desc:"No single day can account for more than 50% of your total profit"},{val:"None",label:"No Consistency Rule",desc:"Trade freely with no restrictions on daily profit distribution"}].map(({val,label,desc})=>(
+              <button key={val} onClick={()=>setForm(f=>({...f,consistencyRule:val}))} style={{padding:"18px 20px",background:form.consistencyRule===val?"rgba(52,211,153,0.15)":"#0a0c0f",border:`1px solid ${form.consistencyRule===val?"#34d399":"#1a2332"}`,borderRadius:10,color:"#e2e8f0",cursor:"pointer",textAlign:"left",transition:"all 0.15s"}}>
+                <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:15,color:form.consistencyRule===val?"#34d399":"#e2e8f0",marginBottom:4}}>{label}</div>
+                <div style={{fontSize:12,color:"#6b7280"}}>{desc}</div>
+              </button>
+            ))}
+          </div>
+        )},
+        {title:"Drawdown Rules",content:(
+          <div style={{display:"flex",flexDirection:"column",gap:20}}>
+            <div>
+              <div style={{fontSize:12,color:"#9ca3af",marginBottom:10,fontFamily:"'Syne',sans-serif",fontWeight:600,letterSpacing:"1px"}}>DRAWDOWN TYPE</div>
+              <div style={{display:"flex",gap:10}}>
+                {["End Of Day","Trailing","Static"].map(v=>(
+                  <button key={v} onClick={()=>setForm(f=>({...f,drawdownType:v}))} style={{flex:1,padding:"12px",background:form.drawdownType===v?"rgba(52,211,153,0.15)":"#0a0c0f",border:`1px solid ${form.drawdownType===v?"#34d399":"#1a2332"}`,borderRadius:8,color:form.drawdownType===v?"#34d399":"#6b7280",fontSize:12,cursor:"pointer",fontFamily:"'Roboto', sans-serif,monospace",transition:"all 0.15s"}}>{v}</button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <div style={{fontSize:12,color:"#9ca3af",marginBottom:10,fontFamily:"'Syne',sans-serif",fontWeight:600,letterSpacing:"1px"}}>MAX TOTAL DRAWDOWN</div>
+              <div style={{display:"flex",gap:8}}>
+                {[1500,2000,3000,5000].map(v=>(
+                  <button key={v} onClick={()=>setForm(f=>({...f,maxDrawdownAmt:v}))} style={{flex:1,padding:"10px 0",background:form.maxDrawdownAmt===v?"rgba(52,211,153,0.15)":"#0a0c0f",border:`1px solid ${form.maxDrawdownAmt===v?"#34d399":"#1a2332"}`,borderRadius:8,color:form.maxDrawdownAmt===v?"#34d399":"#6b7280",fontSize:13,cursor:"pointer",fontFamily:"'Roboto', sans-serif,monospace",transition:"all 0.15s"}}>${v.toLocaleString()}</button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <div style={{fontSize:12,color:"#9ca3af",marginBottom:10,fontFamily:"'Syne',sans-serif",fontWeight:600,letterSpacing:"1px"}}>MAX DAILY LOSS</div>
+              <div style={{display:"flex",gap:8}}>
+                {[1,2,3,0].map(v=>(
+                  <button key={v} onClick={()=>setForm(f=>({...f,maxDailyLossPct:v}))} style={{flex:1,padding:"10px 0",background:form.maxDailyLossPct===v?"rgba(52,211,153,0.15)":"#0a0c0f",border:`1px solid ${form.maxDailyLossPct===v?"#34d399":"#1a2332"}`,borderRadius:8,color:form.maxDailyLossPct===v?"#34d399":"#6b7280",fontSize:13,cursor:"pointer",fontFamily:"'Roboto', sans-serif,monospace",transition:"all 0.15s"}}>{v===0?"OFF":`${v}%`}</button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )},
+      ];
+
+      return (
+        <div style={{fontFamily:"'Roboto', sans-serif,monospace",background:"#0a0c0f",minHeight:"100vh",color:"#e2e8f0",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div style={{width:"100%",maxWidth:440}}>
+            <div style={{textAlign:"center",marginBottom:40}}>
+              <div style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:28,letterSpacing:"-1px",marginBottom:8}}>TRADELOG <span style={{color:"#34d399"}}>PRO+</span></div>
+              <div style={{color:"#4a5568",fontSize:14}}>Set up your evaluation account</div>
+            </div>
+            <div style={{display:"flex",gap:6,marginBottom:32,justifyContent:"center"}}>
+              {steps.map((_,i)=>(
+                <div key={i} style={{height:4,flex:1,maxWidth:60,borderRadius:2,background:i<=step?"#34d399":"#1a2332",transition:"background 0.3s"}}/>
+              ))}
+            </div>
+            <div style={{background:"#0f1419",border:"1px solid #1a2332",borderRadius:16,padding:28,marginBottom:20}}>
+              <div style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:18,marginBottom:24}}>{steps[step].title}</div>
+              {steps[step].content}
+            </div>
+            <div style={{display:"flex",gap:12}}>
+              {step>0&&<button onClick={()=>setStep(s=>s-1)} style={{flex:1,padding:"14px",background:"transparent",border:"1px solid #1a2332",borderRadius:10,color:"#9ca3af",cursor:"pointer",fontFamily:"'Roboto', sans-serif,monospace"}}>← Back</button>}
+              {step<steps.length-1
+                ?<button className="btn-green" style={{flex:1,padding:"14px",fontSize:15}} onClick={()=>setStep(s=>s+1)}>Next →</button>
+                :<button className="btn-green" style={{flex:1,padding:"14px",fontSize:15}} onClick={finish}>Start Evaluation 🚀</button>
+              }
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+  </script>
+</body>
+</html>
